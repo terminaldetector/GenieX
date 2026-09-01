@@ -145,6 +145,16 @@ cmake --install build-android-cpu --prefix pkg-geniex
 `sdk/pkg-geniex/lib/` holds, so the same gradle project yields the CPU-only AAR
 that CI publishes as `geniex-android-aar-cpu-<tag>.aar`.
 
+#### AAR from CI
+
+Both AARs already build on every ready PR ([pr-check.yml](../.github/workflows/pr-check.yml)) and ship with every release ([release.yml](../.github/workflows/release.yml)). For the builds in between — handing someone an AAR off a feature branch, or re-running Android alone after a toolchain-image bump — dispatch **Actions → Android → Run workflow**, or:
+
+```bash
+gh workflow run android.yml --ref <branch>
+```
+
+It drives the same two reusables the PR graph does ([_build-sdk.yml](../.github/workflows/_build-sdk.yml) → [_build-android-aar.yml](../.github/workflows/_build-android-aar.yml)), narrowed by `platforms` to `android-arm64` and `android-arm64-cpu` so a dispatch doesn't also queue the Windows and Linux ARM64 builds. The run leaves `android-aar` and `android-aar-cpu` artifacts (plus the two `sdk-android-*` packages) for download.
+
 Deploy and smoke-test on device:
 
 ```bash

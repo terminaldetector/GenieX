@@ -8,6 +8,11 @@ on:
         required: false
         type: boolean
         default: true
+      retention_days:
+        description: "Artifact retention. The default suits the PR/release graphs, which consume the AAR in the same run; a manual build that exists to hand someone an AAR wants longer."
+        required: false
+        type: number
+        default: 1
 
 permissions:
   contents: read
@@ -106,4 +111,4 @@ jobs:
           name: android-aar${{ matrix.tag_suffix }}
           path: ${{ steps.aar.outputs.path }}
           if-no-files-found: error
-          retention-days: 1
+          retention-days: ${{ inputs.retention_days }}
