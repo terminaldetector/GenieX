@@ -18,6 +18,11 @@ on:
         required: false
         type: string
         default: ""
+      platforms:
+        description: "JSON array of platform ids to build. Defaults to every platform."
+        required: false
+        type: string
+        default: '["windows-arm64", "linux-arm64", "linux-arm64-cpu", "android-arm64", "android-arm64-cpu"]'
 
 permissions:
   contents: read
@@ -28,33 +33,58 @@ permissions:
 # single upgrade point for Rust toolchain / apt layers.
 
 jobs:
+  # The platform table lives here rather than in `build.strategy.matrix.include`
+  # because an include-only matrix can't be narrowed: GitHub re-adds an include
+  # entry that matches no combination as a *new* combination, so `inputs.platforms`
+  # would resurrect the very platforms it excluded. Emitting the table as JSON and
+  # consuming it as a dynamic matrix keeps the filter honest.
+  platforms:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.select.outputs.matrix }}
+    steps:
+      - name: Select platforms
+        id: select
+        env:
+          PLATFORMS: ${{ inputs.platforms }}
+        run: |
+          set -euo pipefail
+          # linux-arm64-cpu: NPU-less Dragonwing IoT boards (unoq) can't run
+          # armv8.2. android-arm64-cpu: minSdk 27 still admits armv8.0 phones,
+          # which trap on armv8.7. Both per #1217.
+          table='[
+            {"platform":"windows-arm64",    "runner":"windows-11-arm", "preset":"arm64-windows-snapdragon-release"},
+            {"platform":"linux-arm64",      "runner":"ubuntu-latest",  "preset":"arm64-linux-snapdragon-release",   "container_image":"docker.io/qualcomm/geniex-toolchain-linux:v0.1.0"},
+            {"platform":"linux-arm64-cpu",  "runner":"ubuntu-latest",  "preset":"arm64-linux-cpu-release",          "container_image":"docker.io/qualcomm/geniex-toolchain-linux:v0.1.0"},
+            {"platform":"android-arm64",    "runner":"ubuntu-latest",  "preset":"arm64-android-snapdragon-release", "container_image":"docker.io/qualcomm/geniex-toolchain-android:v0.1.0"},
+            {"platform":"android-arm64-cpu","runner":"ubuntu-latest",  "preset":"arm64-android-cpu-release",        "container_image":"docker.io/qualcomm/geniex-toolchain-android:v0.1.0"}
+          ]'
+
+          # A typo'd id would otherwise build nothing and pass; name it and fail.
+          unknown="$(jq -rn --argjson want "$PLATFORMS" --argjson table "$table" \
+            '($want - [$table[].platform]) | join(", ")')"
+          if [ -n "$unknown" ]; then
+            echo "::error::Unknown platform(s): $unknown"
+            exit 1
+          fi
+
+          include="$(jq -cn --argjson want "$PLATFORMS" --argjson table "$table" \
+            '[$table[] | select(.platform as $p | $want | index($p))]')"
+          if [ "$include" = "[]" ]; then
+            echo "::error::inputs.platforms selected no platforms"
+            exit 1
+          fi
+
+          echo "matrix=$(jq -cn --argjson include "$include" '{$include}')" >>"$GITHUB_OUTPUT"
+          echo "Building: $(jq -r '[.[].platform] | join(", ")' <<<"$include")"
+
   build:
     name: ${{ matrix.platform }}
+    needs: [platforms]
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - platform: windows-arm64
-            runner: windows-11-arm
-            preset: arm64-windows-snapdragon-release
-          - platform: linux-arm64
-            runner: ubuntu-latest
-            preset: arm64-linux-snapdragon-release
-            container_image: docker.io/qualcomm/geniex-toolchain-linux:v0.1.0
-          # NPU-less Dragonwing IoT boards (unoq) can't run armv8.2. See #1217.
-          - platform: linux-arm64-cpu
-            runner: ubuntu-latest
-            preset: arm64-linux-cpu-release
-            container_image: docker.io/qualcomm/geniex-toolchain-linux:v0.1.0
-          - platform: android-arm64
-            runner: ubuntu-latest
-            preset: arm64-android-snapdragon-release
-            container_image: docker.io/qualcomm/geniex-toolchain-android:v0.1.0
-          # minSdk 27 still admits armv8.0 phones, which trap on armv8.7. See #1217.
-          - platform: android-arm64-cpu
-            runner: ubuntu-latest
-            preset: arm64-android-cpu-release
-            container_image: docker.io/qualcomm/geniex-toolchain-android:v0.1.0
+      matrix: ${{ fromJSON(needs.platforms.outputs.matrix) }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
 

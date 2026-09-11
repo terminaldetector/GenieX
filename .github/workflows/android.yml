@@ -1,0 +1,53 @@
+name: Android
+
+# On-demand Android build: cross-compiles the Snapdragon and CPU-only SDK
+# packages in the Android toolchain container, then assembles the release
+# AARs from them.
+#
+# Same two reusables the PR graph and release.yml drive, so there is one
+# Android build definition, not two. The only difference is `platforms`:
+# a dispatch here narrows build-sdk to the Android rows instead of also
+# queueing the Windows/Linux ARM64 builds nobody asked for.
+#
+# PRs and tags are already covered — pr-check.yml on every ready PR,
+# release.yml on a release tag. This exists for the builds in between:
+# handing someone an AAR off a feature branch, or re-running Android
+# alone after a toolchain-image bump.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_tag:
+        description: "Explicit version tag baked into the build (e.g. v1.2.3-rc.1). Blank derives it from git."
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-sdk:
+    name: build-sdk
+    uses: ./.github/workflows/_build-sdk.yml
+    secrets: inherit
+    with:
+      upload_artifact: true
+      version_tag: ${{ inputs.version_tag }}
+      platforms: '["android-arm64", "android-arm64-cpu"]'
+
+  build-android-aar:
+    name: build-android-aar
+    needs: [build-sdk]
+    uses: ./.github/workflows/_build-android-aar.yml
+    secrets: inherit
+    with:
+      upload_artifact: true
+      # Unlike the PR/release graphs, the artifact *is* the deliverable here
+      # and outlives the run that made it.
+      retention_days: 14
